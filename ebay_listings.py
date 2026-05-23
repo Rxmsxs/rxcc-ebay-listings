@@ -107,10 +107,10 @@ def get_access_token():
     return None
 
 def make_affiliate_url(original_url):
+    separator = "&" if "?" in original_url else "?"
     return (
-        f"https://rover.ebay.com/rover/1/711-53200-19255-0/1"
-        f"?mpre={requests.utils.quote(original_url)}"
-        f"&campid=5339154394&toolid=10001&mkrid=711-53200-19255-0&mkcid=1"
+        f"{original_url}{separator}"
+        f"mkevt=1&mkcid=1&mkrid=711-53200-19255-0&campid=5339154394&toolid=10001"
     )
 
 def search_listings(token, card_id):
