@@ -2,13 +2,13 @@ name: eBay Listings Sync
 
 on:
   schedule:
-    - cron: "0 12 * * *"  # täglich um 12:00 UTC (= 07:00 EST)
-  workflow_dispatch:        # manuell ausführbar über GitHub UI
+    - cron: '0 7,13,19 * * *'  # täglich um 07:00, 13:00, 19:00 UTC
+  workflow_dispatch:             # manuell ausführbar über GitHub UI
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
