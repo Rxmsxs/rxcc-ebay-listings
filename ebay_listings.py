@@ -9,15 +9,18 @@ EBAY_CLIENT_SECRET = os.environ["EBAY_CLIENT_SECRET"]
 SUPABASE_URL       = os.environ["SUPABASE_URL"]
 SUPABASE_KEY       = os.environ["SUPABASE_SERVICE_KEY"]
 
-LISTINGS_PER_CARD  = 5
+LISTINGS_PER_CARD = 5
 
 CARDS = [
+    # SE
     "NRSA01-SE-001", "NRSA01-SE-002", "NRSA01-SE-003", "NRSA01-SE-004",
     "NRSA02-SE-001", "NRSA02-SE-002", "NRSA02-SE-003", "NRSA02-SE-004",
     "NRSA03-SE-001", "NRSA03-SE-002", "NRSA03-SE-003", "NRSA03-SE-004",
     "NRV01-SE-001", "NRV01-SE-002", "NRV01-SE-003", "NRV01-SE-004",
+    # CR
     "NREA01-CR-001", "NREA01-CR-002", "NREA01-CR-003", "NREA01-CR-004",
     "NREA02-CR-001", "NREA02-CR-002", "NREA02-CR-003", "NREA02-CR-004",
+    # BP
     "NRSA01-BP-001", "NRSA01-BP-002", "NRSA01-BP-003", "NRSA01-BP-004",
     "NRSA01-BP-005", "NRSA01-BP-006", "NRSA01-BP-007",
     "NRSA02-BP-001", "NRSA02-BP-002", "NRSA02-BP-003", "NRSA02-BP-004",
@@ -26,6 +29,7 @@ CARDS = [
     "NRSA03-BP-005", "NRSA03-BP-006", "NRSA03-BP-007",
     "NRV01-BP-001", "NRV01-BP-002", "NRV01-BP-003", "NRV01-BP-004",
     "NRV01-BP-005", "NRV01-BP-006", "NRV01-BP-007",
+    # MR
     "NREA01-MR-001", "NREA01-MR-002", "NREA01-MR-003", "NREA01-MR-004",
     "NREA02-MR-001", "NREA02-MR-002", "NREA02-MR-003", "NREA02-MR-004",
     "NRSA01-MR-001", "NRSA01-MR-002", "NRSA01-MR-003", "NRSA01-MR-004",
@@ -36,10 +40,12 @@ CARDS = [
     "NRSA03-MR-005", "NRSA03-MR-006", "NRSA03-MR-007", "NRSA03-MR-008",
     "NRV01-MR-001", "NRV01-MR-002", "NRV01-MR-003", "NRV01-MR-004",
     "NRV01-MR-005", "NRV01-MR-006",
+    # SP
     "NREA01-SP-001", "NREA01-SP-002", "NREA01-SP-003", "NREA01-SP-004",
     "NRSA01-SP-001", "NRSA01-SP-002", "NRSA01-SP-003", "NRSA01-SP-004",
     "NRSA02-SP-001", "NRSA02-SP-002", "NRSA02-SP-003", "NRSA02-SP-004",
     "NRV01-SP-001", "NRV01-SP-002", "NRV01-SP-003", "NRV01-SP-004",
+    # AR
     "NREA01-AR-001", "NREA01-AR-002", "NREA01-AR-003", "NREA01-AR-004",
     "NREA01-AR-005", "NREA01-AR-006", "NREA01-AR-007", "NREA01-AR-008",
     "NREA01-AR-009", "NREA01-AR-010",
@@ -51,18 +57,44 @@ CARDS = [
     "NRSA02-AR-009", "NRSA02-AR-010",
     "NRSA03-AR-001", "NRSA03-AR-002", "NRSA03-AR-003", "NRSA03-AR-004",
     "NRSA03-AR-005", "NRSA03-AR-006", "NRSA03-AR-007",
+    # ASP
     "NRSA03-ASP-001", "NRSA03-ASP-002", "NRSA03-ASP-003", "NRSA03-ASP-004",
     "NRSA03-ASP-005", "NRSA03-ASP-006", "NRSA03-ASP-007", "NRSA03-ASP-008",
+    # ◇ASP
+    "NRSA03-◇ASP-001", "NRSA03-◇ASP-002", "NRSA03-◇ASP-003", "NRSA03-◇ASP-004",
+    "NRSA03-◇ASP-005", "NRSA03-◇ASP-006", "NRSA03-◇ASP-007", "NRSA03-◇ASP-008",
+    # ◇UR
     "NREA02-◇UR-001", "NREA02-◇UR-002", "NREA02-◇UR-003", "NREA02-◇UR-004",
     "NRSA03-◇UR-001", "NRSA03-◇UR-002", "NRSA03-◇UR-003", "NRSA03-◇UR-004",
     "NRSA03-◇UR-005", "NRSA03-◇UR-006", "NRSA03-◇UR-007", "NRSA03-◇UR-008",
     "NRSA03-◇UR-009", "NRSA03-◇UR-010", "NRSA03-◇UR-011",
+    # PR
     "NREA-PR-001", "NREA-PR-002", "NREA-PR-003",
     "NRIE-PR-002",
     "NRSA-PR-001", "NRSA-PR-003", "NRSA-PR-004", "NRSA-PR-005",
     "NRSA-PR-006", "NRSA-PR-009", "NRSA-PR-010",
     "NRSA-◇PR-002",
 ]
+
+def get_search_keyword(card_id):
+    if "◇" in card_id:
+        base_id = card_id.replace("◇", "")
+        return f"{base_id} diamond"
+    return card_id
+
+def is_valid_result(item, card_id):
+    title = item.get("title", "").lower()
+    clean_id = card_id.replace("◇", "").lower()
+    if clean_id in title:
+        return True
+    relaxed_id = clean_id.replace("-", " ", 1)
+    if relaxed_id in title:
+        return True
+    if "◇" in card_id:
+        base_id = card_id.replace("◇", "").lower()
+        if ("diamond" in title or "💎" in title) and base_id in title:
+            return True
+    return False
 
 def sb_headers():
     return {
@@ -79,7 +111,7 @@ def delete_listings_for_card(card_id):
         params={"card_identifier": f"eq.{card_id}"},
     )
     if r.status_code not in (200, 204):
-        print(f"  ⚠️  Delete failed for {card_id}: {r.status_code} {r.text}")
+        print(f"  ⚠️ Delete failed for {card_id}: {r.status_code} {r.text}")
 
 def insert_listings(rows):
     r = requests.post(
@@ -88,7 +120,7 @@ def insert_listings(rows):
         json=rows,
     )
     if r.status_code not in (200, 201, 204):
-        print(f"  ⚠️  Insert failed: {r.status_code} {r.text}")
+        print(f"  ⚠️ Insert failed: {r.status_code} {r.text}")
 
 def get_access_token():
     credentials = base64.b64encode(f"{EBAY_CLIENT_ID}:{EBAY_CLIENT_SECRET}".encode()).decode()
@@ -114,7 +146,7 @@ def make_affiliate_url(original_url):
     )
 
 def search_listings(token, card_id):
-    keyword = card_id.replace("◇", "diamond ")
+    keyword = get_search_keyword(card_id)
     r = requests.get(
         "https://api.ebay.com/buy/browse/v1/item_summary/search",
         headers={
@@ -131,7 +163,7 @@ def search_listings(token, card_id):
     )
     if r.status_code == 200:
         return r.json().get("itemSummaries", [])
-    print(f"  ⚠️  eBay error {r.status_code} for {card_id}")
+    print(f"  ⚠️ eBay error {r.status_code} for {card_id}")
     return []
 
 def run():
@@ -146,6 +178,7 @@ def run():
 
     now = datetime.now(timezone.utc).isoformat()
     total_inserted = 0
+    total_skipped = 0
 
     for i, card_id in enumerate(CARDS, 1):
         print(f"\n[{i}/{len(CARDS)}] {card_id}")
@@ -161,6 +194,12 @@ def run():
             price = item.get("price", {}).get("value")
             if not price:
                 continue
+
+            if not is_valid_result(item, card_id):
+                print(f"  ⚠️ Invalid: '{item.get('title', '')[:60]}'")
+                total_skipped += 1
+                continue
+
             original_url = item.get("itemWebUrl", "")
             rows.append({
                 "card_identifier": card_id,
@@ -178,10 +217,12 @@ def run():
             total_inserted += len(rows)
             for row in rows:
                 print(f"  ✅ {row['title'][:55]} — {row['price']} {row['currency']}")
+        else:
+            print("  — All results invalid, skipping.")
 
         time.sleep(1)
 
-    print(f"\n✅ Done! {total_inserted} listings synced to DB.")
+    print(f"\n✅ Done! {total_inserted} listings inserted | {total_skipped} invalid skipped.")
 
 if __name__ == "__main__":
     run()
