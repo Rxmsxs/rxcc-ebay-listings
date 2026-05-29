@@ -173,9 +173,18 @@ def get_search_keyword(card_id, card_names):
     return card_id
 
 
+_BLACKLIST_PHRASES = [
+    "choose your", "pick your", "all hits", "choose a card",
+    "your choice", "you pick", "lot of", "complete set",
+]
+
 def is_valid_result(item, card_id, card_names):
     title      = item.get("title", "").lower()
     is_diamond = "◇" in card_id
+
+    # --- BLACKLIST: multi-card / pick-your-own listings → always reject ---
+    if any(phrase in title for phrase in _BLACKLIST_PHRASES):
+        return False
 
     clean_id    = card_id.replace("◇", "")
     set_prefix  = get_set_prefix(card_id)
