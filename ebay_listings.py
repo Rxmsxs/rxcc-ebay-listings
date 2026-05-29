@@ -60,10 +60,10 @@ CARDS = [
     # ASP
     "NRSA03-ASP-001", "NRSA03-ASP-002", "NRSA03-ASP-003", "NRSA03-ASP-004",
     "NRSA03-ASP-005", "NRSA03-ASP-006", "NRSA03-ASP-007", "NRSA03-ASP-008",
-    # ◇ASP
+    # diamond ASP
     "NRSA03-◇ASP-001", "NRSA03-◇ASP-002", "NRSA03-◇ASP-003", "NRSA03-◇ASP-004",
     "NRSA03-◇ASP-005", "NRSA03-◇ASP-006", "NRSA03-◇ASP-007", "NRSA03-◇ASP-008",
-    # ◇UR
+    # diamond UR
     "NREA02-◇UR-001", "NREA02-◇UR-002", "NREA02-◇UR-003", "NREA02-◇UR-004",
     "NRSA03-◇UR-001", "NRSA03-◇UR-002", "NRSA03-◇UR-003", "NRSA03-◇UR-004",
     "NRSA03-◇UR-005", "NRSA03-◇UR-006", "NRSA03-◇UR-007", "NRSA03-◇UR-008",
@@ -76,25 +76,107 @@ CARDS = [
     "NRSA-◇PR-002",
 ]
 
-def get_search_keyword(card_id):
-    if "◇" in card_id:
-        base_id = card_id.replace("◇", "")
-        return f"{base_id} diamond"
+# ---------------------------------------------------------------------------
+# Supabase: fetch display_name for every card identifier
+# ---------------------------------------------------------------------------
+
+def fetch_card_names():
+    """Returns dict: { "NRSA03-ASP-007": "Rock Lee", ... }"""
+    url = f"{SUPABASE_URL}/rest/v1/cards"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+    }
+    result = {}
+    offset = 0
+    limit = 1000
+    while True:
+        r = requests.get(
+            url,
+            headers=headers,
+            params={
+                "select": "name,display_name",
+                "language": "eq.english",
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        if r.status_code != 200:
+            print(f"⚠️  Could not fetch card names from Supabase: {r.status_code}")
+            break
+        batch = r.json()
+        for card in batch:
+            ident = card.get("name", "")
+            display = card.get("display_name", "")
+            if ident and display:
+                result[ident] = display
+        if len(batch) < limit:
+            break
+        offset += limit
+    print(f"✅ Loaded {len(result)} card names from Supabase")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def get_rarity(card_id):
+    """Extract rarity from identifier, e.g. NRSA03-ASP-007 → 'ASP'"""
+    clean = card_id.replace("◇", "")
+    parts = clean.split("-")
+    return parts[1] if len(parts) >= 2 else ""
+
+
+def get_search_keyword(card_id, card_names):
+    display_name = card_names.get(card_id, "")
+    rarity = get_rarity(card_id)
+    is_diamond = "◇" in card_id
+
+    if display_name:
+        if is_diamond:
+            return f"{display_name} diamond {rarity} naruto kayou"
+        return f"{display_name} {rarity} naruto kayou"
+
+    # Fallback: old identifier-based search
+    if is_diamond:
+        return card_id.replace("◇", "") + " diamond"
     return card_id
 
-def is_valid_result(item, card_id):
+
+def is_valid_result(item, card_id, card_names):
     title = item.get("title", "").lower()
+    is_diamond = "◇" in card_id
+
+    # --- 1. Old identifier check (fallback, still catches code-in-title listings) ---
     clean_id = card_id.replace("◇", "").lower()
     if clean_id in title:
         return True
     relaxed_id = clean_id.replace("-", " ", 1)
     if relaxed_id in title:
         return True
-    if "◇" in card_id:
-        base_id = card_id.replace("◇", "").lower()
-        if ("diamond" in title or "💎" in title) and base_id in title:
+
+    # --- 2. display_name + rarity check ---
+    display_name = card_names.get(card_id, "")
+    rarity = get_rarity(card_id).lower()
+
+    if display_name and rarity:
+        name_words = display_name.lower().split()
+        name_match  = all(w in title for w in name_words)
+        rarity_match = rarity in title
+        naruto_match = "naruto" in title or "kayou" in title
+
+        if name_match and rarity_match and naruto_match:
+            if is_diamond:
+                return "diamond" in title or "💎" in title
             return True
+
     return False
+
+
+# ---------------------------------------------------------------------------
+# Supabase helpers
+# ---------------------------------------------------------------------------
 
 def sb_headers():
     return {
@@ -103,6 +185,7 @@ def sb_headers():
         "Content-Type": "application/json",
         "Prefer": "return=minimal",
     }
+
 
 def delete_listings_for_card(card_id):
     r = requests.delete(
@@ -113,6 +196,7 @@ def delete_listings_for_card(card_id):
     if r.status_code not in (200, 204):
         print(f"  ⚠️ Delete failed for {card_id}: {r.status_code} {r.text}")
 
+
 def insert_listings(rows):
     r = requests.post(
         f"{SUPABASE_URL}/rest/v1/card_market_listings",
@@ -122,8 +206,15 @@ def insert_listings(rows):
     if r.status_code not in (200, 201, 204):
         print(f"  ⚠️ Insert failed: {r.status_code} {r.text}")
 
+
+# ---------------------------------------------------------------------------
+# eBay helpers
+# ---------------------------------------------------------------------------
+
 def get_access_token():
-    credentials = base64.b64encode(f"{EBAY_CLIENT_ID}:{EBAY_CLIENT_SECRET}".encode()).decode()
+    credentials = base64.b64encode(
+        f"{EBAY_CLIENT_ID}:{EBAY_CLIENT_SECRET}".encode()
+    ).decode()
     r = requests.post(
         "https://api.ebay.com/identity/v1/oauth2/token",
         headers={
@@ -138,15 +229,17 @@ def get_access_token():
     print(f"❌ Token error: {r.status_code} — {r.text}")
     return None
 
+
 def make_affiliate_url(original_url):
     separator = "&" if "?" in original_url else "?"
     return (
         f"{original_url}{separator}"
-        f"mkevt=1&mkcid=1&mkrid=711-53200-19255-0&campid=5339154394&toolid=10001"
+        "mkevt=1&mkcid=1&mkrid=711-53200-19255-0&campid=5339154394&toolid=10001"
     )
 
-def search_listings(token, card_id):
-    keyword = get_search_keyword(card_id)
+
+def search_listings(token, card_id, card_names):
+    keyword = get_search_keyword(card_id, card_names)
     r = requests.get(
         "https://api.ebay.com/buy/browse/v1/item_summary/search",
         headers={
@@ -166,11 +259,19 @@ def search_listings(token, card_id):
     print(f"  ⚠️ eBay error {r.status_code} for {card_id}")
     return []
 
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def run():
     print("=" * 50)
     print(f"🚀 eBay Listings Sync — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"   Cards: {len(CARDS)} | Listings per card: {LISTINGS_PER_CARD}")
     print("=" * 50)
+
+    # Load card names from Supabase once at startup
+    card_names = fetch_card_names()
 
     token = get_access_token()
     if not token:
@@ -181,8 +282,12 @@ def run():
     total_skipped = 0
 
     for i, card_id in enumerate(CARDS, 1):
-        print(f"\n[{i}/{len(CARDS)}] {card_id}")
-        items = search_listings(token, card_id)
+        display = card_names.get(card_id, "")
+        label = f"{card_id}" + (f" ({display})" if display else "")
+        print(f"\n[{i}/{len(CARDS)}] {label}")
+        print(f"  🔍 Query: {get_search_keyword(card_id, card_names)}")
+
+        items = search_listings(token, card_id, card_names)
 
         if not items:
             print("  — No listings found, skipping.")
@@ -195,7 +300,7 @@ def run():
             if not price:
                 continue
 
-            if not is_valid_result(item, card_id):
+            if not is_valid_result(item, card_id, card_names):
                 print(f"  ⚠️ Invalid: '{item.get('title', '')[:60]}'")
                 total_skipped += 1
                 continue
@@ -223,6 +328,7 @@ def run():
         time.sleep(1)
 
     print(f"\n✅ Done! {total_inserted} listings inserted | {total_skipped} invalid skipped.")
+
 
 if __name__ == "__main__":
     run()
