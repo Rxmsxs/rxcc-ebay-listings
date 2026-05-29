@@ -1,8 +1,23 @@
 import requests
 import os
+import re
 from datetime import datetime, timezone
 import time
 import base64
+
+# Maps set prefix → human-readable series used in eBay titles
+SET_TO_SERIES = {
+    "NRSA01": "Series 1",
+    "NRSA02": "Series 2",
+    "NRSA03": "Series 3",
+    "NREA01": "Earth 1",
+    "NREA02": "Earth 2",
+    "NRV01":  "NRV01",
+}
+
+# Regex to find any card identifier in a listing title
+# Matches patterns like: NRSA03-ASP-007, NRZ06-BP-031, NRB09-CR-001, etc.
+_IDENT_RE = re.compile(r'\b(NR[A-Z0-9]+)[-–]([\w◇]+)[-–](\d+)', re.IGNORECASE)
 
 EBAY_CLIENT_ID     = os.environ["EBAY_CLIENT_ID"]
 EBAY_CLIENT_SECRET = os.environ["EBAY_CLIENT_SECRET"]
@@ -133,16 +148,24 @@ def get_rarity(card_id):
     return parts[1] if len(parts) >= 2 else ""
 
 
+def get_card_number(card_id):
+    """Extract card number, e.g. NRSA03-ASP-007 → 007"""
+    clean = card_id.replace("◇", "")
+    parts = clean.split("-")
+    return parts[2] if len(parts) >= 3 else ""
+
+
 def get_search_keyword(card_id, card_names):
     display_name = card_names.get(card_id, "").strip()
     rarity       = get_rarity(card_id)
     set_prefix   = get_set_prefix(card_id)
+    series_label = SET_TO_SERIES.get(set_prefix, set_prefix)
     is_diamond   = "◇" in card_id
 
     if display_name:
         if is_diamond:
-            return f"{display_name} diamond {rarity} {set_prefix} naruto kayou"
-        return f"{display_name} {rarity} {set_prefix} naruto kayou"
+            return f"{display_name} diamond {rarity} {series_label} naruto kayou"
+        return f"{display_name} {rarity} {series_label} naruto kayou"
 
     # Fallback: identifier-based search
     if is_diamond:
@@ -153,30 +176,56 @@ def get_search_keyword(card_id, card_names):
 def is_valid_result(item, card_id, card_names):
     title      = item.get("title", "").lower()
     is_diamond = "◇" in card_id
-    set_prefix = get_set_prefix(card_id).lower()
 
-    # --- 1. Identifier check (strongest signal) ---
-    clean_id = card_id.replace("◇", "").lower()
-    if clean_id in title:
+    clean_id    = card_id.replace("◇", "")
+    set_prefix  = get_set_prefix(card_id)
+    rarity      = get_rarity(card_id)
+    card_number = get_card_number(card_id)
+
+    # --- HARD EXCLUSION: title contains a different card identifier ---
+    # If ANY identifier pattern is found in the title, it must match ours.
+    # e.g. listing says "NRSA03-ASP-034" but we want "NRSA03-ASP-002" → reject
+    # e.g. listing says "NRZ06-SE-015" but we want "NRSA01-SE-003" → reject
+    for match in _IDENT_RE.finditer(title):
+        found_set    = match.group(1).upper()
+        found_rarity = match.group(2).upper().replace("◇", "")
+        found_num    = match.group(3).lstrip("0") or "0"
+        our_num      = card_number.lstrip("0") or "0"
+        our_rarity   = rarity.upper()
+        our_set      = set_prefix.upper()
+
+        # If set AND rarity AND number all match → fine
+        if (found_set == our_set and
+                found_rarity == our_rarity and
+                found_num == our_num):
+            continue
+        # If set AND rarity match but number differs → definitely wrong card
+        if found_set == our_set and found_rarity == our_rarity:
+            return False
+        # If set doesn't match at all → different series → reject
+        if found_set != our_set:
+            return False
+
+    # --- 1. Identifier check (strongest positive signal) ---
+    if clean_id.lower() in title:
         return True
-    relaxed_id = clean_id.replace("-", " ", 1)
+    relaxed_id = clean_id.lower().replace("-", " ", 1)
     if relaxed_id in title:
         return True
 
-    # --- 2. display_name + rarity + set check ---
+    # --- 2. display_name + rarity + series check ---
     display_name = card_names.get(card_id, "").strip()
-    rarity       = get_rarity(card_id).lower()
+    series_label = SET_TO_SERIES.get(set_prefix, "").lower()
 
     if display_name and rarity:
-        name_words   = display_name.lower().split()
-        name_match   = all(w in title for w in name_words)
-        rarity_match = rarity in title
-        naruto_match = "naruto" in title or "kayou" in title
-        # Require set prefix in title to avoid cross-series contamination
-        # (skip set check for PR cards since they rarely include the full set)
-        set_match = (set_prefix in title) or (rarity == "pr")
+        name_words    = display_name.lower().split()
+        name_match    = all(w in title for w in name_words)
+        rarity_match  = rarity.lower() in title
+        naruto_match  = "naruto" in title or "kayou" in title
+        # For PR cards series check is relaxed (PRs rarely include full set name)
+        series_match  = (series_label in title) or (rarity.lower() == "pr")
 
-        if name_match and rarity_match and naruto_match and set_match:
+        if name_match and rarity_match and naruto_match and series_match:
             if is_diamond:
                 return "diamond" in title or "💎" in title
             return True
