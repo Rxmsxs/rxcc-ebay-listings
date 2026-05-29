@@ -257,9 +257,9 @@ def delete_listings_for_card(card_id):
 
 
 def insert_listings(rows):
-    # ignore-duplicates: silently skips if ebay_item_id already exists
+    # on_conflict=ebay_item_id + ignore-duplicates: silently skips duplicate item IDs
     r = requests.post(
-        f"{SUPABASE_URL}/rest/v1/card_market_listings",
+        f"{SUPABASE_URL}/rest/v1/card_market_listings?on_conflict=ebay_item_id",
         headers={**sb_headers(), "Prefer": "resolution=ignore-duplicates,return=minimal"},
         json=rows,
     )
@@ -298,8 +298,15 @@ def make_affiliate_url(original_url):
     )
 
 
-def search_listings(token, card_id, card_names):
-    keyword = get_search_keyword(card_id, card_names)
+def get_identifier_keyword(card_id):
+    """Pure identifier-based search — catches listings that only include the card ID."""
+    if "◇" in card_id:
+        return card_id.replace("◇", "") + " diamond"
+    return card_id
+
+
+def _ebay_search(token, query, limit):
+    """Single eBay API call; returns list of itemSummaries."""
     r = requests.get(
         "https://api.ebay.com/buy/browse/v1/item_summary/search",
         headers={
@@ -308,16 +315,59 @@ def search_listings(token, card_id, card_names):
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
         },
         params={
-            "q": keyword,
-            "limit": LISTINGS_PER_CARD,
+            "q": query,
+            "limit": limit,
             "sort": "price",
             "filter": "buyingOptions:{FIXED_PRICE}",
         },
     )
     if r.status_code == 200:
         return r.json().get("itemSummaries", [])
-    print(f"  ⚠️ eBay error {r.status_code} for {card_id}")
+    print(f"  ⚠️ eBay error {r.status_code} for query: {query[:60]}")
     return []
+
+
+def search_listings(token, card_id, card_names):
+    """
+    Dual search:
+      1. Identifier query  → finds listings that contain only the card ID (e.g. NRSA01-SP-001)
+      2. Display-name query → finds listings that use character name + series
+    Results are merged, deduplicated by itemId, sorted by price.
+    """
+    seen_ids = set()
+    all_items = []
+
+    id_query   = get_identifier_keyword(card_id)
+    name_query = get_search_keyword(card_id, card_names)
+
+    # --- Search 1: identifier ---
+    print(f"  🔍 ID query:   {id_query}")
+    for item in _ebay_search(token, id_query, LISTINGS_PER_CARD):
+        iid = item.get("itemId", "")
+        if iid and iid not in seen_ids:
+            seen_ids.add(iid)
+            all_items.append(item)
+
+    time.sleep(0.5)  # small pause between the two calls
+
+    # --- Search 2: display-name (skip if identical to id_query) ---
+    if name_query != id_query:
+        print(f"  🔍 Name query: {name_query}")
+        for item in _ebay_search(token, name_query, LISTINGS_PER_CARD):
+            iid = item.get("itemId", "")
+            if iid and iid not in seen_ids:
+                seen_ids.add(iid)
+                all_items.append(item)
+
+    # Sort merged pool by price (cheapest first)
+    def _price(item):
+        try:
+            return float(item.get("price", {}).get("value", 9999999))
+        except (TypeError, ValueError):
+            return 9999999
+
+    all_items.sort(key=_price)
+    return all_items
 
 
 # ---------------------------------------------------------------------------
@@ -344,8 +394,8 @@ def run():
         display = card_names.get(card_id, "")
         label   = f"{card_id}" + (f" ({display})" if display else "")
         print(f"\n[{i}/{len(CARDS)}] {label}")
-        print(f"  🔍 Query: {get_search_keyword(card_id, card_names)}")
 
+        # search_listings does dual search (identifier + display-name) and prints queries
         items = search_listings(token, card_id, card_names)
 
         if not items:
@@ -354,10 +404,10 @@ def run():
             continue
 
         rows = []
-        seen_item_ids = set()   # deduplicate within this card's batch
+        seen_item_ids = set()
         for item in items:
-            price    = item.get("price", {}).get("value")
-            item_id  = item.get("itemId", "")
+            price   = item.get("price", {}).get("value")
+            item_id = item.get("itemId", "")
             if not price or not item_id:
                 continue
             if item_id in seen_item_ids:
@@ -380,6 +430,10 @@ def run():
                 "updated_at":      now,
             })
 
+            # cap at LISTINGS_PER_CARD valid rows (already sorted cheapest-first)
+            if len(rows) >= LISTINGS_PER_CARD:
+                break
+
         if rows:
             delete_listings_for_card(card_id)
             insert_listings(rows)
@@ -389,7 +443,7 @@ def run():
         else:
             print("  — All results invalid, skipping.")
 
-        time.sleep(1)
+        time.sleep(0.5)  # reduced: we already sleep 0.5 between dual searches
 
     print(f"\n✅ Done! {total_inserted} listings inserted | {total_skipped} invalid skipped.")
 
