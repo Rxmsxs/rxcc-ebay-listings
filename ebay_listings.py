@@ -81,7 +81,7 @@ CARDS = [
 # ---------------------------------------------------------------------------
 
 def fetch_card_names():
-    """Returns dict: { "NRSA03-ASP-007": "Rock Lee", ... }"""
+    """Returns dict: { "NRSA03-ASP-007": "Gaara", ... }"""
     url = f"{SUPABASE_URL}/rest/v1/cards"
     headers = {
         "apikey": SUPABASE_KEY,
@@ -89,11 +89,10 @@ def fetch_card_names():
     }
     result = {}
     offset = 0
-    limit = 1000
+    limit  = 1000
     while True:
         r = requests.get(
-            url,
-            headers=headers,
+            url, headers=headers,
             params={
                 "select": "name,display_name",
                 "language": "eq.english",
@@ -102,12 +101,12 @@ def fetch_card_names():
             },
         )
         if r.status_code != 200:
-            print(f"⚠️  Could not fetch card names from Supabase: {r.status_code}")
+            print(f"⚠️  Could not fetch card names: {r.status_code}")
             break
         batch = r.json()
         for card in batch:
-            ident = card.get("name", "")
-            display = card.get("display_name", "")
+            ident   = card.get("name", "")
+            display = card.get("display_name", "").strip()   # trim spaces
             if ident and display:
                 result[ident] = display
         if len(batch) < limit:
@@ -121,34 +120,42 @@ def fetch_card_names():
 # Helpers
 # ---------------------------------------------------------------------------
 
+def get_set_prefix(card_id):
+    """Extract set prefix, e.g. NRSA03-ASP-007 → NRSA03"""
+    clean = card_id.replace("◇", "")
+    return clean.split("-")[0] if "-" in clean else ""
+
+
 def get_rarity(card_id):
-    """Extract rarity from identifier, e.g. NRSA03-ASP-007 → 'ASP'"""
+    """Extract rarity, e.g. NRSA03-ASP-007 → ASP"""
     clean = card_id.replace("◇", "")
     parts = clean.split("-")
     return parts[1] if len(parts) >= 2 else ""
 
 
 def get_search_keyword(card_id, card_names):
-    display_name = card_names.get(card_id, "")
-    rarity = get_rarity(card_id)
-    is_diamond = "◇" in card_id
+    display_name = card_names.get(card_id, "").strip()
+    rarity       = get_rarity(card_id)
+    set_prefix   = get_set_prefix(card_id)
+    is_diamond   = "◇" in card_id
 
     if display_name:
         if is_diamond:
-            return f"{display_name} diamond {rarity} naruto kayou"
-        return f"{display_name} {rarity} naruto kayou"
+            return f"{display_name} diamond {rarity} {set_prefix} naruto kayou"
+        return f"{display_name} {rarity} {set_prefix} naruto kayou"
 
-    # Fallback: old identifier-based search
+    # Fallback: identifier-based search
     if is_diamond:
         return card_id.replace("◇", "") + " diamond"
     return card_id
 
 
 def is_valid_result(item, card_id, card_names):
-    title = item.get("title", "").lower()
+    title      = item.get("title", "").lower()
     is_diamond = "◇" in card_id
+    set_prefix = get_set_prefix(card_id).lower()
 
-    # --- 1. Old identifier check (fallback, still catches code-in-title listings) ---
+    # --- 1. Identifier check (strongest signal) ---
     clean_id = card_id.replace("◇", "").lower()
     if clean_id in title:
         return True
@@ -156,17 +163,20 @@ def is_valid_result(item, card_id, card_names):
     if relaxed_id in title:
         return True
 
-    # --- 2. display_name + rarity check ---
-    display_name = card_names.get(card_id, "")
-    rarity = get_rarity(card_id).lower()
+    # --- 2. display_name + rarity + set check ---
+    display_name = card_names.get(card_id, "").strip()
+    rarity       = get_rarity(card_id).lower()
 
     if display_name and rarity:
-        name_words = display_name.lower().split()
-        name_match  = all(w in title for w in name_words)
+        name_words   = display_name.lower().split()
+        name_match   = all(w in title for w in name_words)
         rarity_match = rarity in title
         naruto_match = "naruto" in title or "kayou" in title
+        # Require set prefix in title to avoid cross-series contamination
+        # (skip set check for PR cards since they rarely include the full set)
+        set_match = (set_prefix in title) or (rarity == "pr")
 
-        if name_match and rarity_match and naruto_match:
+        if name_match and rarity_match and naruto_match and set_match:
             if is_diamond:
                 return "diamond" in title or "💎" in title
             return True
@@ -198,9 +208,10 @@ def delete_listings_for_card(card_id):
 
 
 def insert_listings(rows):
+    # ignore-duplicates: silently skips if ebay_item_id already exists
     r = requests.post(
         f"{SUPABASE_URL}/rest/v1/card_market_listings",
-        headers={**sb_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+        headers={**sb_headers(), "Prefer": "resolution=ignore-duplicates,return=minimal"},
         json=rows,
     )
     if r.status_code not in (200, 201, 204):
@@ -270,7 +281,6 @@ def run():
     print(f"   Cards: {len(CARDS)} | Listings per card: {LISTINGS_PER_CARD}")
     print("=" * 50)
 
-    # Load card names from Supabase once at startup
     card_names = fetch_card_names()
 
     token = get_access_token()
@@ -279,11 +289,11 @@ def run():
 
     now = datetime.now(timezone.utc).isoformat()
     total_inserted = 0
-    total_skipped = 0
+    total_skipped  = 0
 
     for i, card_id in enumerate(CARDS, 1):
         display = card_names.get(card_id, "")
-        label = f"{card_id}" + (f" ({display})" if display else "")
+        label   = f"{card_id}" + (f" ({display})" if display else "")
         print(f"\n[{i}/{len(CARDS)}] {label}")
         print(f"  🔍 Query: {get_search_keyword(card_id, card_names)}")
 
@@ -295,9 +305,13 @@ def run():
             continue
 
         rows = []
+        seen_item_ids = set()   # deduplicate within this card's batch
         for item in items:
-            price = item.get("price", {}).get("value")
-            if not price:
+            price    = item.get("price", {}).get("value")
+            item_id  = item.get("itemId", "")
+            if not price or not item_id:
+                continue
+            if item_id in seen_item_ids:
                 continue
 
             if not is_valid_result(item, card_id, card_names):
@@ -305,10 +319,11 @@ def run():
                 total_skipped += 1
                 continue
 
+            seen_item_ids.add(item_id)
             original_url = item.get("itemWebUrl", "")
             rows.append({
                 "card_identifier": card_id,
-                "ebay_item_id":    item.get("itemId", ""),
+                "ebay_item_id":    item_id,
                 "title":           item.get("title", ""),
                 "price":           float(price),
                 "currency":        item.get("price", {}).get("currency", "USD"),
