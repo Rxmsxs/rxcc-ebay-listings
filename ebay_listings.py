@@ -19,6 +19,9 @@ SET_TO_SERIES = {
 # Matches patterns like: NRSA03-ASP-007, NRZ06-BP-031, NRB09-CR-001, etc.
 _IDENT_RE = re.compile(r'\b(NR[A-Z0-9]+)[-–]([\w◇]+)[-–](\d+)', re.IGNORECASE)
 
+# Diamond emoji variants used in eBay titles (normalize before regex matching)
+_DIAMOND_EMOJIS = re.compile(r'[🔹💎◆🔷🔶]')
+
 EBAY_CLIENT_ID     = os.environ["EBAY_CLIENT_ID"]
 EBAY_CLIENT_SECRET = os.environ["EBAY_CLIENT_SECRET"]
 SUPABASE_URL       = os.environ["SUPABASE_URL"]
@@ -176,13 +179,14 @@ def get_search_keyword(card_id, card_names):
 _BLACKLIST_PHRASES = [
     "choose your", "pick your", "all hits", "choose a card",
     "your choice", "you pick", "lot of", "complete set",
+    "chinese",
 ]
 
 def is_valid_result(item, card_id, card_names):
     title      = item.get("title", "").lower()
     is_diamond = "◇" in card_id
 
-    # --- BLACKLIST: multi-card / pick-your-own listings → always reject ---
+    # --- BLACKLIST: multi-card / pick-your-own / chinese listings → always reject ---
     if any(phrase in title for phrase in _BLACKLIST_PHRASES):
         return False
 
@@ -191,11 +195,12 @@ def is_valid_result(item, card_id, card_names):
     rarity      = get_rarity(card_id)
     card_number = get_card_number(card_id)
 
+    # Normalize diamond emojis (🔹💎◆) in title so regex can detect card numbers
+    # e.g. "NRSA03-🔹UR-005" → "NRSA03-UR-005" → caught as wrong number if we want 001
+    normalized_title = _DIAMOND_EMOJIS.sub("", title)
+
     # --- HARD EXCLUSION: title contains a different card identifier ---
-    # If ANY identifier pattern is found in the title, it must match ours.
-    # e.g. listing says "NRSA03-ASP-034" but we want "NRSA03-ASP-002" → reject
-    # e.g. listing says "NRZ06-SE-015" but we want "NRSA01-SE-003" → reject
-    for match in _IDENT_RE.finditer(title):
+    for match in _IDENT_RE.finditer(normalized_title):
         found_set    = match.group(1).upper()
         found_rarity = match.group(2).upper().replace("◇", "")
         found_num    = match.group(3).lstrip("0") or "0"
@@ -216,10 +221,11 @@ def is_valid_result(item, card_id, card_names):
             return False
 
     # --- 1. Identifier check (strongest positive signal) ---
-    if clean_id.lower() in title:
+    # Also check normalized title to catch emoji-diamond listings for the right card
+    if clean_id.lower() in title or clean_id.lower() in normalized_title:
         return True
     relaxed_id = clean_id.lower().replace("-", " ", 1)
-    if relaxed_id in title:
+    if relaxed_id in title or relaxed_id in normalized_title:
         return True
 
     # --- 2. display_name + rarity + series check ---
@@ -231,12 +237,12 @@ def is_valid_result(item, card_id, card_names):
         name_match    = all(w in title for w in name_words)
         rarity_match  = rarity.lower() in title
         naruto_match  = "naruto" in title or "kayou" in title
-        # For PR cards series check is relaxed (PRs rarely include full set name)
         series_match  = (series_label in title) or (rarity.lower() == "pr")
 
         if name_match and rarity_match and naruto_match and series_match:
             if is_diamond:
-                return "diamond" in title or "💎" in title
+                # For diamond cards: require matching card number via normalized title
+                return clean_id.lower() in normalized_title
             return True
 
     return False
